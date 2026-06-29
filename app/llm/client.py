@@ -2,12 +2,12 @@
 Thin wrapper around Groq API (OpenAI-compatible). Single responsibility:
 send a prompt, get text back. No business logic here — that lives in explain.py.
 """
-import os
 import json
 import urllib.request
 import urllib.error
+from app.config import settings
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY = settings.groq_api_key
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
 MODEL = "llama-3.3-70b-versatile"
 

@@ -14,11 +14,11 @@ adding a hard startup dependency when you don't need it.
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db.session import SessionLocal
 from app.policy.scraper import scrape_sources, DEFAULT_SOURCES
 from app.policy.differ import diff_all
@@ -26,10 +26,10 @@ from app.policy.service import build_live_snapshot_map, persist_drafts
 
 logger = logging.getLogger(__name__)
 
-SCHEDULER_ENABLED = os.getenv("POLICY_SCHEDULER_ENABLED", "false").lower() == "true"
+SCHEDULER_ENABLED = settings.policy_scheduler_enabled
 # How often to run. Default: once per day at 03:00.
-SCHEDULE_HOUR = int(os.getenv("POLICY_SCHEDULE_HOUR", "3"))
-SCHEDULE_MINUTE = int(os.getenv("POLICY_SCHEDULE_MINUTE", "0"))
+SCHEDULE_HOUR = settings.policy_schedule_hour
+SCHEDULE_MINUTE = settings.policy_schedule_minute
 
 
 # ---------------------------------------------------------------------------

@@ -28,12 +28,33 @@ from app.llm.orchestrator import generate_explanations
 from app.cache.keys import build_bucket_key
 import app.cache.redis_client as redis_client
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-)
+import contextvars
+import uuid
+import time
+from app.config import settings
+
+# Request ID Context Variable
+request_id_ctx_var = contextvars.ContextVar("request_id", default="-")
+
+class RequestIdFilter(logging.Filter):
+    def filter(self, record):
+        record.request_id = request_id_ctx_var.get()
+        return True
+
+# Configure logging with RequestIdFilter
 logger = logging.getLogger("app.main")
+
+handler = logging.StreamHandler()
+handler.addFilter(RequestIdFilter())
+formatter = logging.Formatter("%(asctime)s [%(levelname)s] [RequestID: %(request_id)s] %(name)s: %(message)s")
+handler.setFormatter(formatter)
+
+# Configure root logger
+root_logger = logging.getLogger()
+root_logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
+for h in list(root_logger.handlers):
+    root_logger.removeHandler(h)
+root_logger.addHandler(handler)
 
 # ---------------------------------------------------------------------------
 # Environment Validation & Lifespan
@@ -41,16 +62,16 @@ logger = logging.getLogger("app.main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Validate environment variables on startup
-    db_url = os.getenv("DATABASE_URL")
+    # Validate environment variables on startup from settings
+    db_url = settings.database_url
     if db_url and not (db_url.startswith("postgresql://") or db_url.startswith("postgresql+psycopg2://") or db_url.startswith("sqlite://")):
         logger.error("Startup Warning: DATABASE_URL does not start with expected schemes (postgresql:// or sqlite://)")
 
-    redis_url = os.getenv("REDIS_URL")
+    redis_url = settings.redis_url
     if redis_url and not (redis_url.startswith("redis://") or redis_url.startswith("rediss://")):
         logger.error("Startup Warning: REDIS_URL does not start with expected schemes (redis:// or rediss://)")
 
-    groq_key = os.getenv("GROQ_API_KEY")
+    groq_key = settings.groq_api_key
     if not groq_key:
         logger.info("Startup Info: GROQ_API_KEY is not set. LLM explanation layer will fall back to templates.")
     else:
@@ -65,7 +86,11 @@ app = FastAPI(
     title="LGU Degree Recommendation System",
     description="Deterministic degree eligibility, ranking, and explanation pipeline.",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    contact={
+        "name": "LGU IT Support & Admissions",
+        "email": "support@lgu.edu.pk"
+    }
 )
 
 # Register routers
@@ -110,13 +135,41 @@ class StudentProfileRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 @app.middleware("http")
-async def add_security_headers(request: Request, call_next):
-    response = await call_next(request)
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
-    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    return response
+async def production_middleware(request: Request, call_next):
+    # Determine request ID (read from client headers if present, e.g. from gateway, or generate)
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    token = request_id_ctx_var.set(request_id)
+    
+    start_time = time.perf_counter()
+    client_ip = request.client.host if request.client else "unknown"
+    
+    logger.info(f"Incoming Request: {request.method} {request.url.path} from IP {client_ip}")
+    
+    try:
+        response = await call_next(request)
+        
+        # Inject standard security and request tracking headers
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        
+        duration_ms = (time.perf_counter() - start_time) * 1000.0
+        logger.info(
+            f"Outgoing Response: {request.method} {request.url.path} - Status: {response.status_code} "
+            f"- Duration: {duration_ms:.2f}ms"
+        )
+        return response
+    except Exception as exc:
+        duration_ms = (time.perf_counter() - start_time) * 1000.0
+        logger.error(
+            f"Request Failed: {request.method} {request.url.path} "
+            f"- Duration: {duration_ms:.2f}ms - Error: {exc}"
+        )
+        raise
+    finally:
+        request_id_ctx_var.reset(token)
 
 # ---------------------------------------------------------------------------
 # Rate Limiting & Bot Protection
@@ -235,11 +288,108 @@ def save_recommendation_log(db: Session, log_entry: RecommendationLog):
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/")
+@app.get("/", tags=["system"], summary="Root endpoint returning API status")
 def read_root():
+    """Returns basic status and system metadata."""
     return {"status": "healthy", "service": "LGU AI Recommendation System API"}
 
-@app.post("/recommend/eligible", dependencies=[Depends(rate_limit)])
+
+@app.get(
+    "/health",
+    tags=["system"],
+    summary="Health check endpoint for container orchestration and deployments",
+    response_description="A JSON representation of the health status of database and cache dependencies",
+    responses={
+        200: {
+            "description": "Database is connected and healthy (Redis can be degraded/disabled)",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "status": "healthy",
+                        "database": "connected",
+                        "cache": "connected",
+                        "timestamp": "2026-06-30T00:00:00Z"
+                    }
+                }
+            }
+        },
+        503: {
+            "description": "Critical database dependency is offline",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "status": "unhealthy",
+                        "database": "disconnected: connection refused",
+                        "cache": "unreachable",
+                        "timestamp": "2026-06-30T00:00:00Z"
+                    }
+                }
+            }
+        }
+    }
+)
+def health_check(db: Session = Depends(get_db)):
+    """
+    Checks connection status of critical dependencies:
+    - **Database**: Must be reachable and respond to queries (critical).
+    - **Cache**: Reached via Redis (non-critical, degrades gracefully).
+    """
+    from sqlalchemy import text
+    health_status = {
+        "status": "healthy",
+        "database": "connected",
+        "cache": "disabled",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    
+    # Check database
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception as e:
+        logger.error(f"Health check Database failure: {e}")
+        health_status["status"] = "unhealthy"
+        health_status["database"] = f"disconnected: {str(e)}"
+        
+    # Check cache
+    if redis_client.is_enabled():
+        try:
+            redis_client._client.ping()
+            health_status["cache"] = "connected"
+        except Exception as e:
+            logger.warning(f"Health check Cache degraded: {e}")
+            health_status["cache"] = f"unreachable: {str(e)}"
+    else:
+        health_status["cache"] = "disabled"
+        
+    if health_status["status"] == "unhealthy":
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=health_status
+        )
+        
+    return health_status
+
+@app.post(
+    "/recommend/eligible",
+    dependencies=[Depends(rate_limit)],
+    tags=["recommendation"],
+    summary="Compute degree program recommendations for a student",
+    response_description="Ranked eligible degree programs with structured explanations and a debug list of ineligible programs.",
+    responses={
+        200: {
+            "description": "Successfully evaluated profile and generated recommendations"
+        },
+        422: {
+            "description": "Validation error in student profile fields (percentages or strings containing illegal characters)"
+        },
+        429: {
+            "description": "Rate limit exceeded (too many requests per minute)"
+        },
+        500: {
+            "description": "Unhandled system or database error (traceback masked)"
+        }
+    }
+)
 def recommend_eligible_programs(request: StudentProfileRequest, db: Session = Depends(get_db)):
     logger.info("Processing student recommendation request")
     

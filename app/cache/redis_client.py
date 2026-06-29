@@ -3,13 +3,13 @@ Thin Redis wrapper. If REDIS_URL isn't set, or Redis is unreachable, every
 call becomes a silent no-op — caching is a pure optimization, never a
 hard dependency. A cache outage must never take down recommendations.
 """
-import os
 import json
 import logging
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-REDIS_URL = os.getenv("REDIS_URL")
+REDIS_URL = settings.redis_url
 DEFAULT_TTL_SECONDS = 60 * 60 * 24 * 7
 
 _client = None
