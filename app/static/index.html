@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LGU AI Mentor</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div id="stage">
+    <video id="video-a" class="mentor-video active" playsinline></video>
+    <video id="video-b" class="mentor-video" playsinline></video>
+
+    <div id="progress" class="hidden">
+      <div id="progress-label">Question 1 of 3</div>
+      <div id="progress-track"><div id="progress-fill"></div></div>
+    </div>
+
+    <div id="overlay">
+      <div id="overlay-inner"></div>
+    </div>
+
+    <div id="results" class="hidden"></div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
