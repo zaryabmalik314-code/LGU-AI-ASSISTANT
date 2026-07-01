@@ -12,8 +12,12 @@ from contextlib import asynccontextmanager
 from typing import List
 
 from fastapi import FastAPI, Request, Depends, HTTPException, status
+<<<<<<< HEAD
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+=======
+from fastapi.responses import JSONResponse
+>>>>>>> 8a9d3e6ac4e47537cef36e95790070b4289d40b4
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
@@ -98,6 +102,7 @@ app = FastAPI(
 app.include_router(policy_router)
 
 # ---------------------------------------------------------------------------
+<<<<<<< HEAD
 # Frontend (video-driven mentor UI)
 # ---------------------------------------------------------------------------
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -108,6 +113,8 @@ def serve_frontend():
     return FileResponse("app/static/index.html")
 
 # ---------------------------------------------------------------------------
+=======
+>>>>>>> 8a9d3e6ac4e47537cef36e95790070b4289d40b4
 # Pydantic Schemas for Input Validation
 # ---------------------------------------------------------------------------
 
@@ -163,6 +170,7 @@ async def production_middleware(request: Request, call_next):
         response.headers["X-Request-ID"] = request_id
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-Content-Type-Options"] = "nosniff"
+<<<<<<< HEAD
         if request.url.path.startswith("/static") or request.url.path == "/app":
             # Frontend needs to load its own CSS/JS/video from same origin
             response.headers["Content-Security-Policy"] = (
@@ -172,6 +180,9 @@ async def production_middleware(request: Request, call_next):
             )
         else:
             response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+=======
+        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+>>>>>>> 8a9d3e6ac4e47537cef36e95790070b4289d40b4
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         
         duration_ms = (time.perf_counter() - start_time) * 1000.0
@@ -535,4 +546,8 @@ def recommend_eligible_programs(request: StudentProfileRequest, db: Session = De
         "explanations": explanations,
         "source": source,
         "rejected_programs": rejected_list
+<<<<<<< HEAD
     }
+=======
+    }
+>>>>>>> 8a9d3e6ac4e47537cef36e95790070b4289d40b4
